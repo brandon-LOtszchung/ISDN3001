@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IMU 3D Position & Orientation Tracking</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+        }
+        #visualizer {
+            flex: 2;
+            position: relative;
+            background-color: #2c3e50;
+        }
+        #data-panel {
+            flex: 1;
+            padding: 20px;
+            background: #fff;
+            font-family: monospace;
+            overflow-y: auto;
+            min-width: 300px;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+        }
+        .data-box {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .value { 
+            font-weight: bold; 
+            color: #2c3e50;
+        }
+        .connected { 
+            color: #28a745;
+            font-weight: bold;
+        }
+        .disconnected { 
+            color: #dc3545;
+            font-weight: bold;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px 0;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .trajectory {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        .axis-label {
+            position: absolute;
+            color: white;
+            font-family: monospace;
+            font-size: 14px;
+            padding: 5px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 3px;
+            pointer-events: none;
+        }
+        #x-axis { color: #ff4444; }
+        #y-axis { color: #44ff44; }
+        #z-axis { color: #4444ff; }
+        .slider-container {
+            margin: 10px 0;
+        }
+        .slider-container label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        #compass {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 100px;
+            height: 100px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 50%;
+        }
+        #compass-arrow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 40px;
+            background: red;
+            transform-origin: bottom center;
+        }
+        .debug-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="visualizer">
+            <div class="trajectory">
+                <h3>Position</h3>
+                <p>X: <span id="posX" class="value">0.00</span>m</p>
+                <p>Y: <span id="posY" class="value">0.00</span>m</p>
+                <p>Z: <span id="posZ" class="value">0.00</span>m</p>
+            </div>
+            <div class="axis-label" style="top: 120px; left: 10px;">
+                <span id="x-axis">X: Right/Left</span>
+            </div>
+            <div class="axis-label" style="top: 140px; left: 10px;">
+                <span id="y-axis">Y: Up/Down</span>
+            </div>
+            <div class="axis-label" style="top: 160px; left: 10px;">
+                <span id="z-axis">Z: Forward/Back</span>
+            </div>
+            <div id="compass">
+                <div id="compass-arrow"></div>
+            </div>
+            <div class="debug-overlay">
+                <div id="fps">FPS: 0</div>
+                <div id="data-rate">Data Rate: 0 Hz</div>
+            </div>
+        </div>
+        <div id="data-panel">
+            <div class="data-box">
+                <h3>Connection Status</h3>
+                <p>WebSocket: <span id="status" class="disconnected">Disconnected</span></p>
+                <p>IP: <span id="ip">-</span></p>
+                <p>Update Rate: <span id="updateRate">0</span> Hz</p>
+            </div>
+            
+            <div class="data-box">
+                <h3>IMU Orientation</h3>
+                <p>Pitch: <span id="pitch" class="value">0.00</span>°</p>
+                <p>Roll: <span id="roll" class="value">0.00</span>°</p>
+                <p>Yaw: <span id="yaw" class="value">0.00</span>°</p>
+            </div>
+
+            <div class="data-box">
+                <h3>Madgwick Parameters</h3>
+                <div class="slider-container">
+                    <label>Beta (Algorithm Gain):</label>
+                    <input type="range" id="betaSlider" min="0" max="1" step="0.01" value="0.1">
+                    <span id="betaValue">0.1</span>
+                </div>
+                <div class="slider-container">
+                    <label>Sample Frequency (Hz):</label>
+                    <input type="number" id="sampleFreq" value="100" min="1" max="1000">
+                </div>
+            </div>
+
+            <div class="data-box">
+                <h3>Visualization Controls</h3>
+                <div class="slider-container">
+                    <label>Trail Length:</label>
+                    <input type="range" id="trailLength" min="0" max="500" step="10" value="100">
+                    <span id="trailLengthValue">100</span>
+                </div>
+                <div class="slider-container">
+                    <label>Movement Scale:</label>
+                    <input type="range" id="moveScale" min="0.01" max="2" step="0.01" value="0.1">
+                    <span id="moveScaleValue">0.1</span>
+                </div>
+            </div>
+
+            <div class="data-box">
+                <h3>Position Control</h3>
+                <button onclick="resetPosition()">Reset Position</button>
+                <button onclick="clearTrajectory()">Clear Trajectory</button>
+                <button onclick="calibrateIMU()">Calibrate IMU</button>
+            </div>
+
+            <div class="data-box">
+                <h3>Raw Data</h3>
+                <pre id="rawData" style="overflow-x: auto; font-size: 12px;">Waiting for data...</pre>
+            </div>
+            
+            <div class="data-box">
+                <h3>View Controls</h3>
+                <p>Left Click: Rotate View</p>
+                <p>Right Click: Pan</p>
+                <p>Scroll: Zoom</p>
+                <button onclick="resetView()">Reset View</button>
+                <button onclick="connectWebSocket()">Reconnect</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Include the Madgwick class definition here (previous code remains the same)
+        class Madgwick {
+            constructor(sampleFreq = 100) {
+                this.sampleFreq = sampleFreq;
+                this.beta = 0.1;
+                this.q0 = 1.0;
+                this.q1 = 0.0;
+                this.q2 = 0.0;
+                this.q3 = 0.0;
+            }
+
+            update(gx, gy, gz, ax, ay, az, mx, my, mz) {
+                let recipNorm;
+                let s0, s1, s2, s3;
+                let qDot1, qDot2, qDot3, qDot4;
+                let _2q0, _2q1, _2q2, _2q3;
+                let _4q0, _4q1, _4q2, _8q1, _8q2;
+                let q0q0, q1q1, q2q2, q3q3;
+
+                // Convert gyroscope degrees/sec to radians/sec
+                gx *= 0.0174533;
+                gy *= 0.0174533;
+                gz *= 0.0174533;
+
+                // Rate of change of quaternion from gyroscope
+                qDot1 = 0.5 * (-this.q1 * gx - this.q2 * gy - this.q3 * gz);
+                qDot2 = 0.5 * (this.q0 * gx + this.q2 * gz - this.q3 * gy);
+                qDot3 = 0.5 * (this.q0 * gy - this.q1 * gz + this.q3 * gx);
+                qDot4 = 0.5 * (this.q0 * gz + this.q1 * gy - this.q2 * gx);
+
+                // Compute feedback only if accelerometer measurement valid
+                if (!((ax === 0.0) && (ay === 0.0) && (az === 0.0))) {
+                    // Normalise accelerometer measurement
+                    recipNorm = 1.0 / Math.sqrt(ax * ax + ay * ay + az * az);
+                    ax *= recipNorm;
+                    ay *= recipNorm;
+                    az *= recipNorm;
+
+                    // Auxiliary variables to avoid repeated arithmetic
+                    _2q0 = 2.0 * this.q0;
+                    _2q1 = 2.0 * this.q1;
+                    _2q2 = 2.0 * this.q2;
+                    _2q3 = 2.0 * this.q3;
+                    _4q0 = 4.0 * this.q0;
+                    _4q1 = 4.0 * this.q1;
+                    _4q2 = 4.0 * this.q2;
+                    _8q1 = 8.0 * this.q1;
+                    _8q2 = 8.0 * this.q2;
+                    q0q0 = this.q0 * this.q0;
+                    q1q1 = this.q1 * this.q1;
+                    q2q2 = this.q2 * this.q2;
+                    q3q3 = this.q3 * this.q3;
+
+                    // Gradient decent algorithm corrective step
+                    s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+                    s1 = _4q1 * q3q3 - _2q3 * ax + 4.0 * q0q0 * this.q1 - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+                    s2 = 4.0 * q0q0 * this.q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+                    s3 = 4.0 * q1q1 * this.q3 - _2q1 * ax + 4.0 * q2q2 * this.q3 - _2q2 * ay;
+
+                    // Normalise step magnitude
+                    recipNorm = 1.0 / Math.sqrt(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
+                    s0 *= recipNorm;
+                    s1 *= recipNorm;
+                    s2 *= recipNorm;
+                    s3 *= recipNorm;
+
+                    // Apply feedback step
+                    qDot1 -= this.beta * s0;
+                    qDot2 -= this.beta * s1;
+                    qDot3 -= this.beta * s2;
+                    qDot4 -= this.beta * s3;
+                }
+
+                // Integrate rate of change of quaternion
+                this.q0 += qDot1 * (1.0 / this.sampleFreq);
+                this.q1 += qDot2 * (1.0 / this.sampleFreq);
+                this.q2 += qDot3 * (1.0 / this.sampleFreq);
+                this.q3 += qDot4 * (1.0 / this.sampleFreq);
+
+                // Normalise quaternion
+                recipNorm = 1.0 / Math.sqrt(this.q0 * this.q0 + this.q1 * this.q1 + 
+                                        this.q2 * this.q2 + this.q3 * this.q3);
+                this.q0 *= recipNorm;
+                this.q1 *= recipNorm;
+                this.q2 *= recipNorm;
+                this.q3 *= recipNorm;
+            }
+
+            getQuaternion() {
+                return {
+                    w: this.q0,
+                    x: this.q1,
+                    y: this.q2,
+                    z: this.q3
+                };
+            }
+
+            getEuler() {
+        let euler = {
+            roll: Math.atan2(2 * (this.q0 * this.q1 + this.q2 * this.q3), 1 - 2 * (this.q1 * this.q1 + this.q2 * this.q2)),
+            pitch: Math.asin(2 * (this.q0 * this.q2 - this.q3 * this.q1)),
+            yaw: Math.atan2(2 * (this.q0 * this.q3 + this.q1 * this.q2), 1 - 2 * (this.q2 * this.q2 + this.q3 * this.q3))
+        };
+
+        // Convert to degrees
+        euler.roll *= 57.2958;
+        euler.pitch *= 57.2958;
+        euler.yaw *= 57.2958;
+
+        return euler;
+    }
+        }
+        // Global variables
+        let scene, camera, renderer, cube, controls, trajectoryLine;
+        let ws;
+        let frameCount = 0;
+        let lastTime = Date.now();
+        let trajectory = [];
+        let currentPosition = new THREE.Vector3(0, 0, 0);
+        let velocity = new THREE.Vector3(0, 0, 0);
+        let lastAcceleration = new THREE.Vector3(0, 0, 0);
+        let madgwick = new Madgwick(100);
+        let lastUpdate = 0;
+        let movementScale = 0.1;
+        let maxTrailLength = 100;
+        let dataPackets = 0;
+        let lastDataRate = Date.now();
+
+        function initThree() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x2c3e50);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth * 0.66 / window.innerHeight, 0.1, 1000);
+            camera.position.set(3, 2, 3);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth * 0.66, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('visualizer').appendChild(renderer.domElement);
+
+            // Create IMU body
+            const bodyGeometry = new THREE.BoxGeometry(0.2, 0.1, 0.3);
+            const bodyMaterial = new THREE.MeshPhongMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.9
+            });
+            cube = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            cube.castShadow = true;
+            cube.receiveShadow = true;
+
+            // Add direction indicators
+            const arrowLength = 0.2;
+            const arrowRadius = 0.02;
+
+            // Front arrow (red Z-axis)
+            const frontArrow = new THREE.Mesh(
+                new THREE.ConeGeometry(arrowRadius * 2, arrowLength * 0.5, 8),
+                new THREE.MeshPhongMaterial({ color: 0xff0000 })
+            );
+            frontArrow.position.z = arrowLength;
+            frontArrow.rotation.x = Math.PI / 2;
+            cube.add(frontArrow);
+
+            // Up arrow (blue Y-axis)
+            const upArrow = new THREE.Mesh(
+                new THREE.ConeGeometry(arrowRadius * 2, arrowLength * 0.5, 8),
+                new THREE.MeshPhongMaterial({ color: 0x0000ff })
+            );
+            upArrow.position.y = arrowLength;
+            cube.add(upArrow);
+
+            // Right arrow (green X-axis)
+            const rightArrow = new THREE.Mesh(
+                new THREE.ConeGeometry(arrowRadius * 2, arrowLength * 0.5, 8),
+                new THREE.MeshPhongMaterial({ color: 0x00ff00 })
+            );
+            rightArrow.position.x = arrowLength;
+            rightArrow.rotation.z = -Math.PI / 2;
+            cube.add(rightArrow);
+
+            scene.add(cube);
+
+            // Add trajectory line
+            const trajectoryGeometry = new THREE.BufferGeometry();
+            const trajectoryMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xff0000,
+                linewidth: 2
+            });
+            trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial);
+            scene.add(trajectoryLine);
+
+            // Add ground grid
+            const gridHelper = new THREE.GridHelper(10, 20);
+            gridHelper.material.opacity = 0.5;
+            gridHelper.material.transparent = true;
+            scene.add(gridHelper);
+
+            // Add axes helper
+            const axesHelper = new THREE.AxesHelper(1);
+            scene.add(axesHelper);
+
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 5, 5);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            // Add controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+        }
+
+        function updatePosition(acceleration, deltaTime) {
+            // Scale acceleration and remove gravity
+            acceleration.multiplyScalar(movementScale);
+            acceleration.y += 9.81 * movementScale;
+
+            // Update velocity with damping
+            velocity.add(acceleration.multiplyScalar(deltaTime));
+            velocity.multiplyScalar(0.95);
+
+            // Apply minimum velocity threshold
+            if (velocity.length() < 0.001) {
+                velocity.set(0, 0, 0);
+            }
+
+            // Update position
+            currentPosition.add(velocity.clone().multiplyScalar(deltaTime));
+            cube.position.copy(currentPosition);
+
+            // Update trajectory
+            trajectory.push(currentPosition.clone());
+            if (trajectory.length > maxTrailLength) {
+                trajectory.shift();
+            }
+
+            // Update trajectory line
+            const positions = new Float32Array(trajectory.length * 3);
+            trajectory.forEach((point, i) => {
+                positions[i * 3] = point.x;
+                positions[i * 3 + 1] = point.y;
+                positions[i * 3 + 2] = point.z;
+            });
+            trajectoryLine.geometry.setAttribute('position', 
+                new THREE.BufferAttribute(positions, 3));
+            trajectoryLine.geometry.attributes.position.needsUpdate = true;
+
+            // Update position display
+            document.getElementById('posX').textContent = currentPosition.x.toFixed(3);
+            document.getElementById('posY').textContent = currentPosition.y.toFixed(3);
+            document.getElementById('posZ').textContent = currentPosition.z.toFixed(3);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            frameCount++;
+
+            // Update FPS counter
+            const now = Date.now();
+            if (now - lastTime >= 1000) {
+                document.getElementById('fps').textContent = `FPS: ${frameCount}`;
+                frameCount = 0;
+                lastTime = now;
+
+                // Update data rate
+                document.getElementById('data-rate').textContent = 
+                    `Data Rate: ${dataPackets} Hz`;
+                dataPackets = 0;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function resetView() {
+            camera.position.set(3, 2, 3);
+            camera.lookAt(0, 0, 0);
+            controls.reset();
+        }
+
+        function resetPosition() {
+            currentPosition.set(0, 0, 0);
+            velocity.set(0, 0, 0);
+            lastAcceleration.set(0, 0, 0);
+            cube.position.set(0, 0, 0);
+        }
+
+        function clearTrajectory() {
+            trajectory = [];
+            trajectoryLine.geometry.setAttribute('position', 
+                new THREE.BufferAttribute(new Float32Array(0), 3));
+            trajectoryLine.geometry.attributes.position.needsUpdate = true;
+        }
+
+        function calibrateIMU() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('calibrate');
+                console.log('Calibration requested');
+            }
+        }
+
+        function connectWebSocket() {
+            if (ws) {
+                ws.close();
+            }
+
+            const ip = prompt('Enter ESP32 IP address:', '192.168.0.190');
+            if (!ip) return;
+
+            ws = new WebSocket(`ws://${ip}:81`);
+            
+            ws.onopen = () => {
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('status').className = 'connected';
+                document.getElementById('ip').textContent = ip;
+                console.log('WebSocket Connected');
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('status').className = 'disconnected';
+                console.log('WebSocket Disconnected');
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    dataPackets++;
+                    const data = JSON.parse(event.data);
+                    
+                    // Update Madgwick filter
+                    const now = Date.now();
+                    const dt = (now - lastUpdate) / 1000.0;
+                    lastUpdate = now;
+                    
+                    // Convert string values to numbers
+                    const acc = {
+                        x: parseFloat(data.accX),
+                        y: parseFloat(data.accY),
+                        z: parseFloat(data.accZ)
+                    };
+                    
+                    const gyr = {
+                        x: parseFloat(data.gyrX),
+                        y: parseFloat(data.gyrY),
+                        z: parseFloat(data.gyrZ)
+                    };
+                    
+                    const mag = {
+                        x: parseFloat(data.magX),
+                        y: parseFloat(data.magY),
+                        z: parseFloat(data.magZ)
+                    };
+
+                    // Update Madgwick filter
+                    madgwick.update(
+                        gyr.x, gyr.y, gyr.z,
+                        acc.x, acc.y, acc.z,
+                        mag.x, mag.y, mag.z
+                    );
+
+                    // Get Euler angles
+                    const euler = madgwick.getEuler();
+                    
+                    // Update 3D model rotation
+                    cube.rotation.set(
+                        THREE.MathUtils.degToRad(euler.pitch),
+                        THREE.MathUtils.degToRad(euler.yaw),
+                        THREE.MathUtils.degToRad(euler.roll),
+                        'XYZ'
+                    );
+
+                    // Update position using acceleration
+                    const acceleration = new THREE.Vector3(acc.x, acc.y, acc.z);
+                    updatePosition(acceleration, dt);
+
+                    // Update displays
+                    document.getElementById('pitch').textContent = euler.pitch.toFixed(2);
+                    document.getElementById('roll').textContent = euler.roll.toFixed(2);
+                    document.getElementById('yaw').textContent = euler.yaw.toFixed(2);
+                    
+                    // Update compass
+                    document.getElementById('compass-arrow').style.transform = 
+                        `rotate(${euler.yaw}deg)`;
+
+                    // Update raw data display
+                    document.getElementById('rawData').textContent = JSON.stringify({
+                        acceleration: acc,
+                        gyroscope: gyr,
+                        magnetometer: mag,
+                        euler: euler,
+                        quaternion: madgwick.getQuaternion(),
+                        timestamp: now
+                    }, null, 2);
+
+                } catch (e) {
+                    console.error('Error processing data:', e);
+                    console.error('Raw data:', event.data);
+                }
+            };
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth * 0.66 / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth * 0.66, window.innerHeight);
+        }
+
+        // Initialize everything
+        initThree();
+        connectWebSocket();
+        animate();
+
+        // Event listeners
+        window.addEventListener('resize', onWindowResize, false);
+
+        document.getElementById('betaSlider').addEventListener('input', function(e) {
+            madgwick.beta = parseFloat(e.target.value);
+            document.getElementById('betaValue').textContent = e.target.value;
+        });
+
+        document.getElementById('sampleFreq').addEventListener('change', function(e) {
+            madgwick.sampleFreq = parseInt(e.target.value);
+        });
+
+        document.getElementById('trailLength').addEventListener('input', function(e) {
+            maxTrailLength = parseInt(e.target.value);
+            document.getElementById('trailLengthValue').textContent = e.target.value;
+        });
+
+        document.getElementById('moveScale').addEventListener('input', function(e) {
+            movementScale = parseFloat(e.target.value);
+            document.getElementById('moveScaleValue').textContent = e.target.value;
+        });
+    </script>
+</body>
+</html>

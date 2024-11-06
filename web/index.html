@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IMU 3D Visualization</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div id="visualizer"></div>
+        <div id="info">
+            <div class="data-box">
+                <h3>Connection Status</h3>
+                <p>WebSocket: <span id="status" class="disconnected">Disconnected</span></p>
+                <p>IP: <span id="ip">Not connected</span></p>
+                <p>Update Rate: <span id="updateRate">0</span> Hz</p>
+            </div>
+            
+            <div class="data-box">
+                <h3>IMU Data</h3>
+                <p>Pitch: <span id="pitch" class="value">0.00</span>°</p>
+                <p>Roll: <span id="roll" class="value">0.00</span>°</p>
+                <p>Yaw: <span id="yaw" class="value">0.00</span>°</p>
+            </div>
+
+            <div class="data-box">
+                <h3>Controls</h3>
+                <p>Left Click: Rotate View</p>
+                <p>Right Click: Pan</p>
+                <p>Scroll: Zoom</p>
+                <button onclick="resetView()">Reset View</button>
+            </div>
+
+            <div class="data-box">
+                <h3>Raw Data</h3>
+                <pre id="raw">Waiting for data...</pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/three-handler.js"></script>
+    <script src="js/websocket-handler.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
